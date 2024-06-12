@@ -56,8 +56,8 @@
         }
 
         async function initializePeer() {
-            const credentials = await getTurnCredentials();
-            console.log(credentials);
+            //const credentials = await getTurnCredentials();
+            //console.log(credentials);
             localPeer = new Peer(await generateRandomUserId(), {
                 host: "https://peer-js.robertvolmer.com"
             });
