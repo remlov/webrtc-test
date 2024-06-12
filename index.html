@@ -1,1 +1,165 @@
-Hello
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeerJS with Dynamic Coturn Credentials</title>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen">
+
+    <h1 class="text-2xl font-bold mb-4">PeerJS + Coturn WebRTC Test</h1>
+    <div id="peer-id-display" class="mb-4 text-lg font-medium text-gray-700 hidden">
+        Your Peer ID: <span id="my-peer-id" class="font-bold"></span>
+    </div>
+
+    <div class="mb-4">
+        <label for="peer-id" class="block text-sm font-medium text-gray-700">Enter remote peer ID to call:</label>
+        <input type="text" id="peer-id" placeholder="Peer ID" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+        <button onclick="makeCall()" class="mt-2 bg-indigo-500 text-white px-4 py-2 rounded-md">Call</button>
+    </div>
+
+    <div id="incoming-call" class="mb-4 hidden">
+        <p>Incoming call from: <span id="caller-id"></span></p>
+        <button onclick="acceptCall()" class="bg-green-500 text-white px-4 py-2 rounded-md mr-2">Accept</button>
+        <button onclick="rejectCall()" class="bg-red-500 text-white px-4 py-2 rounded-md">Reject</button>
+    </div>
+
+    <div id="call-controls" class="mb-4 hidden">
+        <button onclick="hangUp()" class="bg-red-500 text-white px-4 py-2 rounded-md mr-2">Hang Up</button>
+        <button onclick="toggleMute()" class="bg-yellow-500 text-white px-4 py-2 rounded-md mr-2">Mute</button>
+        <button onclick="toggleMicrophone()" class="bg-blue-500 text-white px-4 py-2 rounded-md mr-2">Disable Microphone</button>
+        <label for="volume-control" class="block text-sm font-medium text-gray-700 mt-2">Volume Control:</label>
+        <input type="range" id="volume-control" min="0" max="1" step="0.1" value="1" class="mt-1 block w-full">
+    </div>
+
+    <audio id="local-audio" autoplay muted class="hidden"></audio>
+    <audio id="remote-audio" autoplay class="hidden"></audio>
+
+    <script>
+        let localPeer;
+        let conn;
+        let localStream;
+        let call;
+        let isMuted = false;
+        let isMicEnabled = true;
+
+        async function generateRandomUserId() {
+            return Math.floor(Math.random() * 900000) + 100000;
+        }
+
+        async function getTurnCredentials() {
+            const response = await fetch('/turn-credentials');
+            const data = await response.json();
+            return data;
+        }
+
+        async function initializePeer() {
+            const credentials = await getTurnCredentials();
+            console.log(credentials);
+            localPeer = new Peer(await generateRandomUserId(), {
+                host: "https://peer-js.robertvolmer.com"
+            });
+
+            localPeer.on('open', function(id) {
+                console.log('My peer ID is: ' + id);
+                document.getElementById('my-peer-id').textContent = id;
+                document.getElementById('peer-id-display').classList.remove('hidden');
+            });
+
+            localPeer.on('connection', function(connection) {
+                conn = connection;
+                console.log('Connected to: ' + conn.peer);
+                conn.on('data', function(data) {
+                    console.log('Received:', data);
+                });
+            });
+
+            localPeer.on('call', function(incomingCall) {
+                call = incomingCall;
+                document.getElementById('caller-id').textContent = call.peer;
+                document.getElementById('incoming-call').style.display = 'block';
+            });
+
+            localPeer.on('error', function(err) {
+                console.error(err);
+            });
+        }
+
+        async function makeCall() {
+            const peerId = document.getElementById('peer-id').value;
+            if (peerId) {
+                conn = localPeer.connect(peerId);
+                conn.on('open', function() {
+                    console.log('Connection opened with: ' + conn.peer);
+                    conn.send('Hello from ' + localPeer.id);
+                });
+                conn.on('data', function(data) {
+                    console.log('Received:', data);
+                });
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                document.getElementById('local-audio').srcObject = localStream;
+                call = localPeer.call(peerId, localStream);
+                call.on('stream', function(remoteStream) {
+                    document.getElementById('remote-audio').srcObject = remoteStream;
+                    document.getElementById('call-controls').style.display = 'block';
+                });
+                call.on('close', function() {
+                    console.log('Call ended by remote peer');
+                    document.getElementById('call-controls').style.display = 'none';
+                    localStream.getTracks().forEach(track => track.stop());
+                });
+            } else {
+                alert('Please enter a peer ID to call.');
+            }
+        }
+
+        async function acceptCall() {
+            document.getElementById('incoming-call').style.display = 'none';
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            document.getElementById('local-audio').srcObject = localStream;
+            call.answer(localStream);
+            call.on('stream', function(remoteStream) {
+                document.getElementById('remote-audio').srcObject = remoteStream;
+                document.getElementById('call-controls').style.display = 'block';
+            });
+            call.on('close', function() {
+                console.log('Call ended by remote peer');
+                document.getElementById('call-controls').style.display = 'none';
+                localStream.getTracks().forEach(track => track.stop());
+            });
+        }
+
+        function rejectCall() {
+            call.close();
+            document.getElementById('incoming-call').style.display = 'none';
+        }
+
+        function hangUp() {
+            call.close();
+            document.getElementById('call-controls').style.display = 'none';
+            localStream.getTracks().forEach(track => track.stop());
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            localStream.getAudioTracks().forEach(track => track.enabled = !isMuted);
+            document.querySelector("button[onclick='toggleMute()']").textContent = isMuted ? 'Unmute' : 'Mute';
+        }
+
+        function toggleMicrophone() {
+            isMicEnabled = !isMicEnabled;
+            localStream.getAudioTracks().forEach(track => track.enabled = isMicEnabled);
+            document.querySelector("button[onclick='toggleMicrophone()']").textContent = isMicEnabled ? 'Disable Microphone' : 'Enable Microphone';
+        }
+
+        document.getElementById('volume-control').addEventListener('input', function(event) {
+            const volume = event.target.value;
+            document.getElementById('remote-audio').volume = volume;
+        });
+
+        initializePeer();
+    </script>
+</body>
+</html>
